@@ -1,0 +1,5 @@
+interface:
+  display_name: "Multi Input"
+  short_description: "Batch inputs and write through anchored document cursors."
+policy:
+  allow_implicit_invocation: true

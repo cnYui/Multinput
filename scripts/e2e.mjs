@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import { connect, call, setup, waitJob, cursors, documentActions, choicesAction, fieldsAction, keyboardActions, answers, explanations, initialText, sleep } from './session.mjs';
+
+const client = await connect();
+const report = { started_at: new Date().toISOString(), checks: [] };
+const passed = (name, details = {}) => { report.checks.push({ name, passed: true, ...details }); console.log(`PASS ${name}`); };
+try {
+  const tools = await client.listTools(); assert.equal(tools.tools.length, 10); passed('Real MCP initialize + tools/list', { tools: tools.tools.map(t => t.name) });
+  const observed = await setup(client); assert.equal(observed.pages.length,4); assert.equal(observed.documents[0].lines.length,10);
+  passed('Four independent browser contexts observed through MCP', { field_count: observed.pages.find(p=>p.id==='form').elements.length });
+  const invalid = await waitJob(client, await call(client,'execute_batch',{actions:[{id:'stale',op:'form_patch',page_id:'form',changes:[{ref:'note1',op:'fill',value:'MUST NOT APPLY'},{ref:'missing-ref',op:'fill',value:'bad'}]}]}));
+  assert.equal(invalid.status,'failed');
+  let state=await call(client,'workspace_observe',{});assert.equal(state.pages.find(p=>p.id==='form').elements.find(e=>e.ref==='note1').value,'');
+  passed('Stale ref rejects a form patch before any field is changed');
+  await call(client,'cursor_lock',{document_id:'notes',cursors});
+  const docJob=await waitJob(client,await call(client,'execute_batch',{actions:documentActions(3),parallelism:4}));
+  assert.equal(docJob.status,'done');assert.equal(docJob.peak_active,4);
+  state=await call(client,'workspace_observe',{page_ids:[]});
+  const out=state.documents[0].text;
+  const expected=initialText.replace('浏览器：','浏览器：'+documentActions()[0].text).replace('键盘：','键盘：'+documentActions()[1].text).replace('文档：','文档：'+documentActions()[2].text).replace('验证：','验证：'+documentActions()[3].text);
+  assert.equal(out,expected);passed('Four concurrent document writers; newline insertion preserves lower anchors',{peak_active:docJob.peak_active,final_text:out});
+  const formJob=await waitJob(client,await call(client,'execute_batch',{actions:[choicesAction,fieldsAction],parallelism:10}));
+  assert.equal(formJob.status,'done');assert.equal(formJob.peak_active,1);
+  state=await call(client,'workspace_observe',{page_ids:['form']});const fields=state.pages[0].elements;
+  answers.forEach((x,i)=>assert.equal(fields.find(e=>e.ref===`q${i+1}-${x}`).checked,true));
+  explanations.forEach((x,i)=>assert.equal(fields.find(e=>e.ref===`note${i+1}`).value,x));
+  passed('Ten radio choices + ten text values read back from browser DOM',{verified_fields:20,actual_browser_lanes:formJob.peak_active});
+  const keyboard=await waitJob(client,await call(client,'execute_batch',{actions:keyboardActions(6),parallelism:3}));
+  assert.equal(keyboard.status,'done');assert.equal(keyboard.peak_active,3);
+  const starts=keyboard.actions.map(a=>a.started_at),ends=keyboard.actions.map(a=>a.finished_at);
+  assert.ok(Math.max(...starts)<Math.min(...ends));
+  state=await call(client,'workspace_observe',{page_ids:['research','outline','checklist']});
+  for(const a of keyboardActions())assert.equal(state.pages.find(p=>p.id===a.page_id).elements.find(e=>e.ref==='task-input').value,a.value);
+  passed('Three real independent keyboard sequences overlap with no text mixing',{peak_active:3,overlap_ms:Math.min(...ends)-Math.max(...starts)});
+  await assert.rejects(()=>call(client,'cursor_lock',{document_id:'notes',cursors:[{id:'conflict',line:6}]}),/overlap/);
+  passed('Overlapping document lease is rejected through MCP');
+  await call(client,'cursor_release',{document_id:'notes',cursor_ids:cursors.map(c=>c.id)});
+  passed('Completed cursor leases released');
+  const saved=await call(client,'document_save',{document_id:'notes',filename:'verified-test.md'});assert.equal(saved.verified,true);
+  const reopened=await call(client,'document_open',{id:'reopened-test',filename:'verified-test.md'});assert.equal(reopened.text,expected);
+  await assert.rejects(()=>call(client,'document_save',{document_id:'notes',filename:'../escape.md'}),/escapes/);
+  passed('Edited Markdown saved, read back and reopened; path traversal rejected');
+  report.passed=true;report.finished_at=new Date().toISOString();
+}finally{await fs.mkdir('demo-results',{recursive:true});await fs.writeFile('demo-results/e2e-report.json',JSON.stringify(report,null,2));await client.close();}

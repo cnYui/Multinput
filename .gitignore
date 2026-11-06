@@ -1,8 +1,9 @@
-# 渲染产物，可用 render.py / audio.py 重新生成
-out/
+node_modules/
+.runtime/
+demo-results/
+*.log
 
-# 下载的原曲音频（有版权，不入库）
-bgm/
-
+# 演示和测试脚本写入的文档，不入库
+documents/*
+!documents/.gitkeep
 .DS_Store
-__pycache__/

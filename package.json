@@ -1,0 +1,26 @@
+{
+  "name": "multi-input-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "One AI, multiple input lanes: browser batches and anchored concurrent document editing.",
+  "scripts": {
+    "start": "node src/service.mjs",
+    "mcp": "node src/mcp-server.mjs",
+    "call": "node scripts/call.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "node scripts/e2e.mjs",
+    "test:mixed": "node scripts/mixed-e2e.mjs",
+    "demo": "node scripts/demo.mjs",
+    "capture:film": "node scripts/capture-film.mjs",
+    "film:cards": "node scripts/render-film-cards.mjs",
+    "install:codex": "node scripts/install.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "playwright": "1.65.0",
+    "ws": "8.18.3",
+    "yjs": "13.6.33",
+    "zod": "3.25.76"
+  }
+}
