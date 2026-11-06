@@ -1,0 +1,8 @@
+# 渲染产物，可用 render.py / audio.py 重新生成
+out/
+
+# 下载的原曲音频（有版权，不入库）
+bgm/
+
+.DS_Store
+__pycache__/
