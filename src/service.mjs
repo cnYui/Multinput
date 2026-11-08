@@ -24,7 +24,7 @@ const scheduler = new Scheduler({ maxParallel: 10, onChange: changed, execute: a
 function snapshot() {
   return { ...state, documents: [...docs.docs.keys()].map(id => docs.snapshot(id)),
     pages: runtime ? [...runtime.targets.values()].map(p => ({ id: p.id, url: p.url })) : [],
-    jobs: [...scheduler.jobs.keys()].map(id => scheduler.snapshot(id)), capabilities: { max_parallel: 10,
+    jobs: [...scheduler.jobs.keys()].map(id => scheduler.snapshot(id)), capabilities: { max_parallel: 10, browser_mode: runtime?.mode ?? 'starting',
       same_page_policy: 'serialize_browser_actions; form_patch_batches_multiple_fields',
       document_policy: 'concurrent_Yjs_replicas_with_exclusive_line_leases' } };
 }
@@ -50,10 +50,11 @@ async function invoke(name, args = {}) {
   event(name, name === 'execute_batch' ? `${args.actions?.length} 个动作 · 请求并发 ${args.parallelism ?? 'auto'}` : Object.keys(args).join(', '));
   if (name === 'workspace_observe') {
     const pages = [];
-    for (const id of args.page_ids ?? [...runtime.targets.keys()]) pages.push(await runtime.observe(id));
+    for (const id of args.page_ids ?? [...runtime.targets.keys()]) pages.push(await runtime.observe(id, { selector: args.selector, include_links: args.include_links }));
     return { capabilities: snapshot().capabilities, pages, documents: [...docs.docs.keys()].map(id => docs.snapshot(id)), jobs: [...scheduler.jobs.keys()].map(id => scheduler.snapshot(id)) };
   }
   if (name === 'page_open') return runtime.open(args);
+  if (name === 'page_attach') return runtime.attach(args);
   if (name === 'document_create') return docs.create(args);
   if (name === 'document_open') {
     const filename = await documentPath(args.filename);
@@ -114,7 +115,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/reset' && req.method === 'POST') {
       if (scheduler.activeTotal) throw new Error('Wait for running jobs before resetting this demo workspace.');
-      for (const p of runtime.targets.values()) await p.context.close();
+      for (const p of runtime.targets.values()) await runtime.release(p);
       runtime.targets.clear();
       for (const d of docs.docs.values()) d.ydoc.destroy();
       docs.docs.clear(); scheduler.jobs.clear(); state.forms = {}; state.tasks = {}; state.surfaceCursors = {}; state.events = [];
