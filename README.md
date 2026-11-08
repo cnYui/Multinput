@@ -74,11 +74,13 @@ MULTI_INPUT_USER_DATA_DIR=~/.multi-input/chrome-profile MULTI_INPUT_CHANNEL=chro
 # 默认打开 B站投稿页和公众号后台；登录完关掉窗口
 ```
 
-注册到 Claude Code（环境变量会写进 MCP 配置）：
+注册到 Claude Code 或 Codex（环境变量会写进 MCP 配置）：
 
 ```bash
 MULTI_INPUT_USER_DATA_DIR=~/.multi-input/chrome-profile MULTI_INPUT_CHANNEL=chrome MULTI_INPUT_HEADLESS=0 npm run install:claude
 ```
+
+同一个 MCP 服务器两边都能用，Codex 用 `npm run install:codex`，前面加同样的环境变量即可。两边同时开着时会共用 127.0.0.1:43187 上同一个本地服务和同一个浏览器，环境变量以先启动服务的那一方为准。
 
 在这两种模式下，`page_open` 打开新标签页，`page_attach` 可接管已打开的标签页（按 URL 片段匹配），reset 不会关闭接管的标签页，CDP 模式退出时只断开连接。
 

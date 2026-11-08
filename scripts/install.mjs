@@ -14,7 +14,9 @@ if(get.status===0){
  const existing=JSON.parse(get.stdout),transport=existing.transport||existing;
  if(!transport.args?.includes(server))throw new Error('An unrelated MCP server named multi-input already exists. Choose another name rather than overwriting it.');
 }else{
- const add=spawnSync('codex',['mcp','add','multi-input','--',process.execPath,server],{encoding:'utf8'});
+ // MULTI_INPUT_* variables set when running this script (e.g. MULTI_INPUT_USER_DATA_DIR) are stored in the Codex MCP config.
+ const env=Object.entries(process.env).filter(([k])=>k.startsWith('MULTI_INPUT_')).flatMap(([k,v])=>['--env',`${k}=${v.replace(/^~(?=\/)/,os.homedir())}`]);
+ const add=spawnSync('codex',['mcp','add','multi-input',...env,'--',process.execPath,server],{encoding:'utf8'});
  if(add.status!==0)throw new Error(add.stderr||'Could not register MCP server.');
  console.log(add.stdout.trim());
 }
