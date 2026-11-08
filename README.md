@@ -36,7 +36,7 @@ src/service.mjs —— 状态、工具路由、文件读写、实时预览
 
 ## 安装
 
-需要 Node.js 20 或更新版本，以及 Chromium。首次使用：
+需要 Node.js 20 或更新版本，以及 Chromium（或设 `MULTI_INPUT_CHANNEL=chrome` 用本机 Chrome）。首次使用：
 
 ```bash
 npm ci
@@ -55,6 +55,46 @@ http://127.0.0.1:43187/
 ```
 
 也可以单独运行 `npm start`。界面中的表单/多页面面板是只读实时观察视图，实际输入发生在执行器管理的独立浏览器页面；文档面板直接显示合并后的共享文档和真实锚点。
+
+## 用已登录的浏览器填真实网站（B站投稿、公众号）
+
+默认模式每个页面都是全新的无登录态 Chromium。要填需要登录的表单，用下面两种模式之一，pages 会以标签页形式共享同一份登录状态：
+
+| 模式 | 环境变量 | 适合 |
+|---|---|---|
+| 专用持久化 profile（推荐） | `MULTI_INPUT_USER_DATA_DIR=~/.multi-input/chrome-profile` | 登录一次，之后每次复用 cookie |
+| 连接已运行的浏览器 | `MULTI_INPUT_CDP_URL=http://127.0.0.1:9222` | 浏览器用 `--remote-debugging-port=9222 --user-data-dir=<非默认目录>` 启动；Chrome 136 起默认 profile 不允许远程调试 |
+
+其他相关变量：`MULTI_INPUT_CHANNEL=chrome` 直接用本机安装的 Google Chrome（不用再装 Playwright 的 Chromium），`MULTI_INPUT_EXECUTABLE_PATH` 指定浏览器路径，`MULTI_INPUT_HEADLESS=0` 显示窗口，`MULTI_INPUT_UPLOAD_ROOT` 限制可上传文件所在目录。
+
+首次登录（先停掉正在运行的服务，同一 profile 只能被一个浏览器打开）：
+
+```bash
+MULTI_INPUT_USER_DATA_DIR=~/.multi-input/chrome-profile MULTI_INPUT_CHANNEL=chrome npm run login
+# 默认打开 B站投稿页和公众号后台；登录完关掉窗口
+```
+
+注册到 Claude Code（环境变量会写进 MCP 配置）：
+
+```bash
+MULTI_INPUT_USER_DATA_DIR=~/.multi-input/chrome-profile MULTI_INPUT_CHANNEL=chrome MULTI_INPUT_HEADLESS=0 npm run install:claude
+```
+
+在这两种模式下，`page_open` 打开新标签页，`page_attach` 可接管已打开的标签页（按 URL 片段匹配），reset 不会关闭接管的标签页，CDP 模式退出时只断开连接。
+
+为真实网站新增的动作：
+
+| 动作 | 用途 |
+|---|---|
+| `form_patch` 里的 `fill` 作用于 contenteditable | 富文本简介、正文编辑器；用 `execCommand('insertText')` 写入，换行转段落，按空白归一化后回读校验 |
+| `upload` | `ref` 指向 `input[type=file]`（隐藏的也会被观察到）或上传按钮（自动接住文件选择框）；`value` 为绝对路径或路径数组 |
+| `click_text` | 按可见文字点击，`selector` 或 `ref` 限定容器；用于自定义下拉、合集弹窗、选项卡 |
+| `press` | 按键，如在标签输入框里 `Enter` 生成标签 |
+| `wait_text` | 等文字出现，如“上传完成”，`timeout_ms` 最长 10 分钟 |
+
+`workspace_observe` 新增 `selector`（只观察某个容器）和 `include_links: false`（大页面去掉链接），并会返回 placeholder、contenteditable 文本、`role=switch` 等开关的 `aria-checked`。
+
+仿投稿页验证：`npm run test:rich`，在 `tests/fixtures/upload-form.html` 上一次批次完成视频上传、标题与富文本简介、自定义分区下拉、两个回车标签、开关和封面选择框，全部回读校验。这个夹具只模拟了常见控件形态，真实 B站页面的结构需要首次使用时观察确认。
 
 ## 在 Codex 中使用
 
@@ -153,6 +193,11 @@ npm run call -- workspace_observe '{"page_ids":[]}'
 | `MULTI_INPUT_URL` | 自动使用本地端口 | 连接已经运行的服务；此模式不自动启动服务 |
 | `MULTI_INPUT_HEADLESS` | `1` | 设为 `0` 可显示执行器 Chromium 窗口 |
 | `MULTI_INPUT_DOCUMENT_ROOT` | 项目下 `documents/` | `.txt` / `.md` 文件的读写目录 |
+| `MULTI_INPUT_USER_DATA_DIR` | 无 | 持久化 profile 目录，保留登录态 |
+| `MULTI_INPUT_CDP_URL` | 无 | 连接已运行的浏览器（优先于 profile） |
+| `MULTI_INPUT_CHANNEL` | 无 | 如 `chrome`，使用本机安装的浏览器 |
+| `MULTI_INPUT_EXECUTABLE_PATH` | 无 | 浏览器可执行文件路径 |
+| `MULTI_INPUT_UPLOAD_ROOT` | 无 | 设置后只允许上传该目录下的文件 |
 
 文档列偏移使用 UTF-16，与 JavaScript 字符串一致；省略 column 表示行末。演示按 Unicode 字素切分逐字写入，避免把 emoji 的代理对拆开显示。
 

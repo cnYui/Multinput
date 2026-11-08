@@ -6,7 +6,7 @@ const client = await connect();
 const report = { started_at: new Date().toISOString(), checks: [] };
 const passed = (name, details = {}) => { report.checks.push({ name, passed: true, ...details }); console.log(`PASS ${name}`); };
 try {
-  const tools = await client.listTools(); assert.equal(tools.tools.length, 10); passed('Real MCP initialize + tools/list', { tools: tools.tools.map(t => t.name) });
+  const tools = await client.listTools(); assert.equal(tools.tools.length, 11); passed('Real MCP initialize + tools/list', { tools: tools.tools.map(t => t.name) });
   const observed = await setup(client); assert.equal(observed.pages.length,4); assert.equal(observed.documents[0].lines.length,10);
   passed('Four independent browser contexts observed through MCP', { field_count: observed.pages.find(p=>p.id==='form').elements.length });
   const invalid = await waitJob(client, await call(client,'execute_batch',{actions:[{id:'stale',op:'form_patch',page_id:'form',changes:[{ref:'note1',op:'fill',value:'MUST NOT APPLY'},{ref:'missing-ref',op:'fill',value:'bad'}]}]}));

@@ -17,6 +17,20 @@ Use the `multi-input` MCP execution tools. They run deterministic browser/docume
 
 If natural staggered input is requested, keep one batch and choose small varied `start_ms` offsets. For semantic form text changes, `typing_ms` controls per-grapheme input cadence; `preview_ms` allows an application-provided selection preview. For document/browser actions, `start_ms` delays the allocated lane and `pace_ms` controls supported typing. Use different offsets/cadences so tasks overlap without mechanically starting together. These are actual input timings, not just cursor animation.
 
+## Signed-in real sites (upload pages, CMS editors)
+
+Check `capabilities.browser_mode`. In `persistent` or `cdp` mode pages share the user's login; prefer `page_attach` when the user already has the tab open, otherwise `page_open`. In `isolated` mode there is no login: say so instead of trying to sign in.
+
+On large pages observe with `include_links: false` and, when possible, a `selector` for the form container. Then plan one batch:
+
+- Plain inputs and rich editors in one `form_patch` (`fill` works on contenteditable; newlines become paragraphs).
+- `upload` for video/cover files with absolute paths; follow it with `wait_text` for the page's own completion text when later steps depend on the upload.
+- Custom dropdowns and pickers: `click_text` on the trigger, then `click_text` with a `selector` or `ref` scope on the option, chained with `after`.
+- Tag inputs: `fill` then `press` `Enter` per tag.
+- Switches/declarations: `click` the observed `role=switch` ref, then re-observe `checked`.
+
+Never click the final submit/publish button unless the user explicitly asked for it in this task; stop after filling and report what was verified.
+
 ## Verify and continue
 
 `execute_batch` returns a job, not completed success. Poll `job_status` until it settles. Check each action's status, returned verification, and `peak_active`; re-observe the final field/document values before reporting the result. A successful `click` means input was dispatched, not that its intended application effect occurred.
@@ -29,4 +43,4 @@ After the document job finishes, use `document_save` with a relative `.txt`/`.md
 
 ## First use
 
-If the MCP tools are missing, explain that the MCP connection must be loaded in a new Codex session. The project includes a standalone client (`npm run call`) for protocol verification; a shell-driven client call is not proof that the current chat has hot-loaded a new native tool. Do not silently replace this executor with a different browser tool and claim the same capability.
+If the MCP tools are missing, explain that the MCP connection must be loaded in a new Codex or Claude Code session (`npm run install:codex` / `npm run install:claude`). The project includes a standalone client (`npm run call`) for protocol verification; a shell-driven client call is not proof that the current chat has hot-loaded a new native tool. Do not silently replace this executor with a different browser tool and claim the same capability.

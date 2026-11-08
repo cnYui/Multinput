@@ -1,0 +1,24 @@
+<!doctype html><meta charset="utf-8"><title>投稿表单夹具</title>
+<style>.hidden{display:none}.opt{padding:4px;cursor:pointer}.chip{display:inline-block;margin:2px;padding:2px 6px;background:#eee}.switch{width:40px;height:20px;background:#ccc;cursor:pointer}.switch.on{background:#0a0}</style>
+<!-- 仿 B站投稿页：Vue 风格受控输入、富文本简介、隐藏文件框、自定义下拉、回车成标签、开关 -->
+<div class="upload-btn" id="video-btn">上传视频</div><input type="file" id="video-file" class="hidden" accept="video/*">
+<p id="video-status">未上传</p>
+<input placeholder="请输入稿件标题" id="title" maxlength="80"><span id="title-count">0/80</span>
+<div class="select" id="zone"><span id="zone-current">请选择分区</span><div class="hidden" id="zone-list"><div class="opt">知识</div><div class="opt">科技</div><div class="opt">生活</div></div></div>
+<div id="tags"><span id="chips"></span><input id="tag-input" placeholder="按回车键Enter创建标签"></div>
+<div id="desc" contenteditable="true" data-placeholder="填写更全面的相关信息"></div>
+<div class="switch" id="ai-switch" role="switch" aria-checked="false"></div><span>AI 生成内容声明</span>
+<button id="cover-btn">上传封面</button><p id="cover-status">无封面</p>
+<script>
+const state = { title: '', zone: '', tags: [], desc: '', ai: false, video: '', cover: '' }; window.state = state;
+title.addEventListener('input', e => { state.title = e.target.value; document.getElementById('title-count').textContent = `${state.title.length}/80`; });
+document.getElementById('video-btn').onclick = () => document.getElementById('video-file').click();
+document.getElementById('video-file').addEventListener('change', e => { state.video = e.target.files[0]?.name || ''; setTimeout(() => document.getElementById('video-status').textContent = '上传完成', 300); });
+document.getElementById('zone-current').onclick = () => document.getElementById('zone-list').classList.toggle('hidden');
+for (const o of document.querySelectorAll('.opt')) o.onclick = e => { if (!e.isTrusted) return; state.zone = o.textContent; document.getElementById('zone-current').textContent = o.textContent; document.getElementById('zone-list').classList.add('hidden'); };
+const tagInput = document.getElementById('tag-input');
+tagInput.addEventListener('keydown', e => { if (e.key === 'Enter' && e.isTrusted && tagInput.value.trim()) { state.tags.push(tagInput.value.trim()); const c = document.createElement('span'); c.className = 'chip'; c.textContent = tagInput.value.trim(); document.getElementById('chips').append(c); tagInput.value = ''; } });
+desc.addEventListener('input', () => { state.desc = desc.innerText; });
+const sw = document.getElementById('ai-switch'); sw.onclick = () => { state.ai = !state.ai; sw.classList.toggle('on', state.ai); sw.setAttribute('aria-checked', state.ai); };
+document.getElementById('cover-btn').onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = () => { state.cover = i.files[0]?.name || ''; document.getElementById('cover-status').textContent = '封面已选'; }; i.click(); };
+</script>

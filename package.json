@@ -14,7 +14,10 @@
     "demo": "node scripts/demo.mjs",
     "capture:film": "node scripts/capture-film.mjs",
     "film:cards": "node scripts/render-film-cards.mjs",
-    "install:codex": "node scripts/install.mjs"
+    "install:codex": "node scripts/install.mjs",
+    "test:rich": "node scripts/rich-e2e.mjs",
+    "login": "node scripts/login.mjs",
+    "install:claude": "node scripts/install-claude.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
