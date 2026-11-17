@@ -97,9 +97,12 @@ export class BrowserRuntime {
           if (seen.has(c.ref)) return `Duplicate target: ${c.ref}`; seen.add(c.ref);
           const el = window.__miRefs?.get(c.ref);
           if (!el?.isConnected || el.getAttribute('data-mi-ref') !== c.ref) return `Stale ref: ${c.ref}; observe again.`;
-          if (el.disabled || el.readOnly || !el.getBoundingClientRect().width) return `Target not editable: ${c.ref}`;
+          const native = ['radio', 'checkbox'].includes(el.type), aria = ['radio', 'checkbox', 'switch'].includes(el.getAttribute('role'));
+          // Styled checkboxes often shrink the real input to nothing; the visible label is what a user clicks.
+          const box = c.op === 'set_checked' && native ? (el.labels?.[0] || el.closest('label') || el) : el;
+          if (el.disabled || el.readOnly || el.getAttribute('aria-disabled') === 'true' || (!box.getBoundingClientRect().width && !el.getBoundingClientRect().width)) return `Target not editable: ${c.ref}`;
           if (c.op === 'fill' && el.isContentEditable) continue;
-          if (c.op === 'set_checked' && !['radio', 'checkbox'].includes(el.type)) return 'set_checked needs a radio or checkbox.';
+          if (c.op === 'set_checked' && !native && !aria) return 'set_checked needs a radio/checkbox input or a role=radio/checkbox/switch element.';
           if (c.op === 'fill' && !['INPUT', 'TEXTAREA'].includes(el.tagName)) return 'fill needs an input or textarea.';
           if (c.op === 'fill' && ['radio', 'checkbox', 'file', 'button', 'submit'].includes(el.type)) return 'Unsupported input type for fill.';
           if (c.op === 'select_option') {
@@ -122,7 +125,8 @@ export class BrowserRuntime {
       const result = await page.evaluate(async changes => {
         const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
         const norm = t => String(t).replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim();
-        const matches = (el, c) => c.op === 'fill' ? (el.isContentEditable ? norm(el.innerText) === norm(c.value) : el.value === String(c.value)) : c.op === 'set_checked' ? el.checked === c.value : JSON.stringify([...el.selectedOptions].map(o => o.value).sort()) === JSON.stringify((Array.isArray(c.value) ? c.value : [c.value]).slice().sort());
+        const isChecked = el => ['radio', 'checkbox'].includes(el.type) ? el.checked : el.getAttribute('aria-checked') === 'true';
+        const matches = (el, c) => c.op === 'fill' ? (el.isContentEditable ? norm(el.innerText) === norm(c.value) : el.value === String(c.value)) : c.op === 'set_checked' ? isChecked(el) === c.value : JSON.stringify([...el.selectedOptions].map(o => o.value).sort()) === JSON.stringify((Array.isArray(c.value) ? c.value : [c.value]).slice().sort());
         return Promise.all(changes.map(async c => {
           if (c.start_ms) await delay(c.start_ms);
           const el = window.__miRefs.get(c.ref);
@@ -130,7 +134,7 @@ export class BrowserRuntime {
           const phase = value => el.dispatchEvent(new CustomEvent('mi:phase', { bubbles: true, detail: { ref: c.ref, op: c.op, phase: value, at: Date.now() } }));
           phase('active');
           if (c.preview_ms) await delay(c.preview_ms);
-          if (c.op === 'set_checked') { if (el.checked !== c.value) el.click(); }
+          if (c.op === 'set_checked') { if (isChecked(el) !== c.value) el.click(); }
           else if (c.op === 'select_option') {
             const chosen = Array.isArray(c.value) ? c.value : [c.value];
             for (const option of el.options) option.selected = chosen.includes(option.value);
@@ -170,16 +174,24 @@ export class BrowserRuntime {
           phase('done');return { ref: c.ref, verified: matches(el,c) };
         }));
       }, action.changes);
+      // Controlled components (React/Vue radio groups) can ignore a synthetic click; retry those with a trusted click on the label.
+      await page.waitForTimeout(100);
+      const viaLabel = [];
+      for (const [i, c] of action.changes.entries()) {
+        if (c.op !== 'set_checked' || result[i]?.verified && await this.checkedState(page, c.ref) === c.value) continue;
+        if (await this.labelClick(page, c.ref)) viaLabel.push(c.ref);
+      }
       // Re-read after app event handlers and network-triggered re-renders have had a chance to run.
       await page.waitForTimeout(100);
-      const final = await page.evaluate(changes => changes.map(c => {
+      const final = (await page.evaluate(changes => changes.map(c => {
         const el = window.__miRefs?.get(c.ref);
         const norm = t => String(t).replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim();
         if (c.op === 'fill' && el?.isContentEditable) return { ref: c.ref, actual: el.innerText, verified: el.isConnected && norm(el.innerText) === norm(c.value) };
-        const actual = c.op === 'fill' ? el?.value : c.op === 'set_checked' ? el?.checked : [...(el?.selectedOptions || [])].map(o=>o.value);
+        const actual = c.op === 'fill' ? el?.value : c.op === 'set_checked' ? (['radio', 'checkbox'].includes(el?.type) ? el.checked : el?.getAttribute('aria-checked') === 'true') : [...(el?.selectedOptions || [])].map(o=>o.value);
         return { ref: c.ref, actual, verified: !!el?.isConnected && (c.op === 'fill' ? actual === String(c.value) : c.op === 'set_checked' ? actual === c.value : JSON.stringify(actual.slice().sort()) === JSON.stringify((Array.isArray(c.value)?c.value:[c.value]).slice().sort())) };
-      }), action.changes);
-      const verified = result.length === action.changes.length && result.every(r => r.verified) && final.every(r => r.verified);
+      }), action.changes)).map(r => viaLabel.includes(r.ref) ? { ...r, via: 'label_click' } : r);
+      // A set_checked that only succeeded through the label fallback is still a success; judge by the final state.
+      const verified = result.length === action.changes.length && result.every((r, i) => r.verified || action.changes[i].op === 'set_checked') && final.every(r => r.verified);
       this.onSurfaceCursors(action.page_id, action.changes.map(c => ({ ref: c.ref, status: verified ? 'done' : 'failed', op: c.op })));
       if (!verified) throw new Error(`Partial patch; inspect actual state before retrying: ${JSON.stringify(final)}`);
       return { verified, adapter: 'semantic_dom_patch', targets: final, refs };
@@ -190,9 +202,23 @@ export class BrowserRuntime {
       const target = scope.getByText(String(action.value), { exact: action.exact ?? false }).locator('visible=true').first();
       const timeout = action.timeout_ms ?? (action.op === 'wait_text' ? 30000 : 5000);
       this.onSurfaceCursors(action.page_id, [{ ref: action.ref ?? 'text', status: 'writing', op: action.op }]);
-      if (action.op === 'click_text') await target.click({ timeout }); else await target.waitFor({ state: 'visible', timeout });
+      if (action.op === 'click_text') await target.click({ timeout, force: action.force }); else await target.waitFor({ state: 'visible', timeout });
       this.onSurfaceCursors(action.page_id, [{ ref: action.ref ?? 'text', status: 'done', op: action.op }]);
       return { verified: action.op === 'wait_text' ? true : null, adapter: 'playwright_text', actual: action.op === 'click_text' ? 'click_dispatched; observe to verify its effect' : 'visible' };
+    }
+    if (action.op === 'hover' || (action.op === 'click' && (!action.ref || action.value !== undefined))) {
+      // Real pointer moves: controls that only render or accept clicks while hovered (cover "edit" buttons, row menus).
+      // The pointer stays put afterwards, so a following click inside the same container keeps the hover state.
+      const refSel = action.ref && `[data-mi-ref="${action.ref.replace(/["\\]/g, '\\$&')}"]`;
+      if (refSel && await page.locator(refSel).count() !== 1) throw new Error('Stale or ambiguous ref; observe again.');
+      let target = refSel ? page.locator(refSel) : page.locator(action.selector).first();
+      if (action.value !== undefined) target = target.getByText(String(action.value), { exact: action.exact ?? false }).locator('visible=true').first();
+      const timeout = action.timeout_ms ?? 5000;
+      this.onSurfaceCursors(action.page_id, [{ ref: action.ref ?? 'pointer', status: 'writing', op: action.op }]);
+      if (action.op === 'hover') { await target.hover({ timeout, force: action.force }); if (action.hold_ms) await page.waitForTimeout(action.hold_ms); }
+      else await target.click({ timeout, force: action.force });
+      this.onSurfaceCursors(action.page_id, [{ ref: action.ref ?? 'pointer', status: 'done', op: action.op }]);
+      return { verified: null, adapter: 'playwright_pointer', actual: `${action.op}_dispatched; observe to verify its effect` };
     }
     if (action.op === 'press' && !action.ref) { await page.keyboard.press(String(action.value)); return { verified: null, adapter: 'playwright', actual: 'key_dispatched' }; }
     const escaped = action.ref.replace(/["\\]/g, '\\$&');
@@ -237,16 +263,39 @@ export class BrowserRuntime {
     if (action.op === 'fill') await el.fill(String(action.value), { timeout: 5000 });
     else if (action.op === 'type_text') await el.pressSequentially(String(action.value), { delay: action.pace_ms ?? 0, timeout: 20000 });
     else if (action.op === 'press') await el.press(String(action.value), { timeout: 5000 });
-    else if (action.op === 'set_checked') await el.setChecked(Boolean(action.value), { timeout: 5000 });
+    else if (action.op === 'set_checked') {
+      // Component-library radios (e.g. Semi UI) hide the input under a label that intercepts the pointer.
+      await el.setChecked(Boolean(action.value), { timeout: 3000 }).catch(() => {});
+      if (await this.checkedState(page, action.ref) !== Boolean(action.value)) await this.labelClick(page, action.ref);
+    }
     else if (action.op === 'select_option') await el.selectOption(action.value, { timeout: 5000 });
-    else if (action.op === 'click') await el.click({ timeout: 5000 });
+    else if (action.op === 'click') await el.click({ timeout: 5000, force: action.force });
     else throw new Error(`Unsupported browser operation: ${action.op}`);
-    const verified = action.op === 'select_option' ? await el.evaluate((el, wanted) => JSON.stringify([...el.selectedOptions].map(o=>o.value).sort()) === JSON.stringify((Array.isArray(wanted)?wanted:[wanted]).slice().sort()), action.value) : action.op === 'set_checked' ? await el.isChecked() === action.value
+    const verified = action.op === 'select_option' ? await el.evaluate((el, wanted) => JSON.stringify([...el.selectedOptions].map(o=>o.value).sort()) === JSON.stringify((Array.isArray(wanted)?wanted:[wanted]).slice().sort()), action.value) : action.op === 'set_checked' ? await this.checkedState(page, action.ref) === action.value
       : action.op === 'fill' ? (rich ? norm(await read()) === norm(action.value) : await read() === String(action.value))
       : action.op === 'type_text' ? (rich ? norm(await read()).includes(norm(action.value)) : await read() === String(action.value)) : null;
     this.onSurfaceCursors(action.page_id, [{ ref: action.ref, status: verified === false ? 'failed' : 'done', op: action.op }]);
     if (verified === false) throw new Error('Final field value did not match.');
-    return { verified, adapter: 'playwright', actual: ['click', 'press'].includes(action.op) ? `${action.op}_dispatched; observe to verify its effect` : await read().catch(() => el.isChecked()) };
+    return { verified, adapter: 'playwright', actual: ['click', 'press'].includes(action.op) ? `${action.op}_dispatched; observe to verify its effect` : action.op === 'set_checked' ? await this.checkedState(page, action.ref) : await read() };
+  }
+  // Checked state of a native radio/checkbox, or aria-checked of a role=radio/checkbox/switch element.
+  checkedState(page, ref) {
+    return page.evaluate(ref => {
+      const el = window.__miRefs?.get(ref); if (!el?.isConnected) return null;
+      return ['radio', 'checkbox'].includes(el.type) ? el.checked : el.getAttribute('aria-checked') === 'true';
+    }, ref);
+  }
+  // Trusted click on what a user would press: the input's label (or the ARIA element itself).
+  async labelClick(page, ref) {
+    const ok = await page.evaluate(ref => {
+      const el = window.__miRefs?.get(ref); if (!el?.isConnected) return false;
+      const t = ['radio', 'checkbox'].includes(el.type) ? (el.labels?.[0] || el.closest('label') || el) : el;
+      window.__miClickTarget?.removeAttribute('data-mi-click'); t.setAttribute('data-mi-click', ref); window.__miClickTarget = t; return true;
+    }, ref);
+    if (!ok) return false;
+    try { await page.locator(`[data-mi-click="${ref.replace(/["\\]/g, '\\$&')}"]`).first().click({ timeout: 5000 }); return true; }
+    catch { return false; }
+    finally { await page.evaluate(() => { window.__miClickTarget?.removeAttribute('data-mi-click'); window.__miClickTarget = null; }).catch(() => {}); }
   }
   async recordStart(dir) {
     if (this.recordContext) throw new Error('Already recording.');

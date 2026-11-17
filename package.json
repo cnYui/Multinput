@@ -16,6 +16,7 @@
     "film:cards": "node scripts/render-film-cards.mjs",
     "install:codex": "node scripts/install.mjs",
     "test:rich": "node scripts/rich-e2e.mjs",
+    "test:pointer": "node scripts/pointer-e2e.mjs",
     "login": "node scripts/login.mjs",
     "install:claude": "node scripts/install-claude.mjs"
   },
