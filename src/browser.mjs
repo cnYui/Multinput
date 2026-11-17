@@ -18,6 +18,7 @@ export class BrowserRuntime {
     if (process.env.MULTI_INPUT_CDP_URL) {
       // Attach to a browser the user already runs and is signed in to. Pages share its login state.
       this.mode = 'cdp';
+      this.localCdp = ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(process.env.MULTI_INPUT_CDP_URL).hostname);
       this.browser = await chromium.connectOverCDP(process.env.MULTI_INPUT_CDP_URL);
       this.shared = this.browser.contexts()[0] ?? await this.browser.newContext();
     } else if (process.env.MULTI_INPUT_USER_DATA_DIR) {
@@ -57,14 +58,20 @@ export class BrowserRuntime {
   async observe(id, { selector, include_links = true } = {}) {
     const { page } = this.get(id);
     const elements = await page.evaluate(({ selector, include_links }) => {
-      const scope = selector ? document.querySelector(selector) : document;
+      // Micro-frontends (e.g. wujie on WeChat Channels) render forms inside open shadow roots; walk into them.
+      const roots = (root, out = []) => { out.push(root); for (const h of root.querySelectorAll('*')) if (h.shadowRoot) roots(h.shadowRoot, out); return out; };
+      const scope = selector ? roots(document).map(r => r.querySelector(selector)).find(Boolean) : document;
       if (!scope) throw new Error(`Selector not found: ${selector}`);
       const query = 'input,textarea,select,button,[contenteditable="true"],[contenteditable=""],[role=switch],[role=checkbox],[role=radio],[role=combobox],[role=button],[role=tab]' + (include_links ? ',a[href]' : '');
-      const fields = [...scope.querySelectorAll(query)];
-      window.__miRefs ??= new Map();
+      const fields = roots(scope).flatMap(r => [...r.querySelectorAll(query)]);
+      // Renumber on every observation: refs left on elements by an earlier pass (or duplicate ids
+      // across shadow roots) would otherwise collide and make later actions ambiguous.
+      for (const r of roots(document)) for (const old of r.querySelectorAll('[data-mi-ref]')) old.removeAttribute('data-mi-ref');
+      window.__miRefs = new Map();
+      const used = new Set();
       // File inputs are usually hidden behind a styled drop zone, so keep them even with zero size.
       return fields.filter(el => !el.closest('[data-mi-overlay]') && (el.getBoundingClientRect().width || el.type === 'file') && el.type !== 'hidden').map((el, i) => {
-        const ref = el.id || el.getAttribute('data-mi-ref') || `mi-${i}`;
+        const ref = el.id && !used.has(el.id) ? el.id : `mi-${i}`; used.add(ref);
         el.setAttribute('data-mi-ref', ref); window.__miRefs.set(ref, el);
         const r = el.getBoundingClientRect();
         return { ref, role: el.getAttribute('role') || el.type || el.tagName.toLowerCase(),
@@ -114,7 +121,7 @@ export class BrowserRuntime {
       // One tool call and evaluation. Independent targets may have overlapping, staggered input tasks.
       const result = await page.evaluate(async changes => {
         const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-        const norm = t => String(t).replace(/\s+/g, ' ').trim();
+        const norm = t => String(t).replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim();
         const matches = (el, c) => c.op === 'fill' ? (el.isContentEditable ? norm(el.innerText) === norm(c.value) : el.value === String(c.value)) : c.op === 'set_checked' ? el.checked === c.value : JSON.stringify([...el.selectedOptions].map(o => o.value).sort()) === JSON.stringify((Array.isArray(c.value) ? c.value : [c.value]).slice().sort());
         return Promise.all(changes.map(async c => {
           if (c.start_ms) await delay(c.start_ms);
@@ -131,13 +138,20 @@ export class BrowserRuntime {
           }
           else if (el.isContentEditable) {
             // Rich editors (Quill, ProseMirror, Vue editors) listen to beforeinput/input from execCommand.
+            const quill = el.closest('.ql-container')?.__quill;
+            if (quill && !c.typing_ms) {
+              // Quill re-renders asynchronously after insertParagraph and drops the following insertText; use its API.
+              // source 'user' so the app's v-model / onChange bindings (which often ignore 'api' changes) see it.
+              quill.setText(String(c.value), 'user'); await delay(50);
+              phase('done'); return { ref: c.ref, actual: el.innerText, verified: matches(el, c) };
+            }
             el.focus();
             const range = document.createRange(); range.selectNodeContents(el);
             const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
             const chunks = c.typing_ms ? [...new Intl.Segmenter('zh', { granularity: 'grapheme' }).segment(String(c.value))].map(s => s.segment) : String(c.value).split(/(\n)/).filter(Boolean);
             document.execCommand('delete');
             for (const chunk of chunks) {
-              if (chunk === '\n') document.execCommand('insertParagraph'); else document.execCommand('insertText', false, chunk);
+              if (chunk === '\n') { document.execCommand('insertParagraph'); await delay(0); } else document.execCommand('insertText', false, chunk);
               if (c.typing_ms) await delay(c.typing_ms);
             }
             el.blur();
@@ -160,7 +174,7 @@ export class BrowserRuntime {
       await page.waitForTimeout(100);
       const final = await page.evaluate(changes => changes.map(c => {
         const el = window.__miRefs?.get(c.ref);
-        const norm = t => String(t).replace(/\s+/g, ' ').trim();
+        const norm = t => String(t).replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim();
         if (c.op === 'fill' && el?.isContentEditable) return { ref: c.ref, actual: el.innerText, verified: el.isConnected && norm(el.innerText) === norm(c.value) };
         const actual = c.op === 'fill' ? el?.value : c.op === 'set_checked' ? el?.checked : [...(el?.selectedOptions || [])].map(o=>o.value);
         return { ref: c.ref, actual, verified: !!el?.isConnected && (c.op === 'fill' ? actual === String(c.value) : c.op === 'set_checked' ? actual === c.value : JSON.stringify(actual.slice().sort()) === JSON.stringify((Array.isArray(c.value)?c.value:[c.value]).slice().sort())) };
@@ -194,7 +208,15 @@ export class BrowserRuntime {
         if (!fs.statSync(f, { throwIfNoEntry: false })?.isFile()) throw new Error(`Upload file not found: ${f}`);
       }
       const isFileInput = await el.evaluate(n => n.tagName === 'INPUT' && n.type === 'file');
-      if (isFileInput) {
+      if (isFileInput && this.localCdp) {
+        // Playwright refuses >50 MB over CDP; a browser on this machine can read the paths itself.
+        const session = await page.context().newCDPSession(page);
+        try {
+          const { result } = await session.send('Runtime.evaluate', { expression: `window.__miRefs?.get(${JSON.stringify(action.ref)}) ?? document.querySelector('[data-mi-ref="${escaped}"]')` });
+          if (!result?.objectId) throw new Error('Stale or ambiguous ref; observe again.');
+          await session.send('DOM.setFileInputFiles', { objectId: result.objectId, files: files.map(f => path.resolve(f)) });
+        } finally { await session.detach().catch(() => {}); }
+      } else if (isFileInput) {
         await el.setInputFiles(files, { timeout: 10000 });
         // A browser started elsewhere (CDP) may still drop non-ASCII paths; resend small files as payloads.
         if (!await el.evaluate((n, count) => n.files.length === count, files.length) && files.every(f => fs.statSync(f).size < 50 * 1024 * 1024))
@@ -205,11 +227,13 @@ export class BrowserRuntime {
         await chooser.setFiles(files);
       }
       this.onSurfaceCursors(action.page_id, [{ ref: action.ref, status: 'done', op: action.op }]);
-      return { verified: isFileInput ? await el.evaluate((n, count) => n.files.length === count, files.length) : null, adapter: 'playwright_upload', actual: files.map(f => path.basename(f)) };
+      // Upload widgets often replace the input once a file is accepted; that is not a failure.
+      const verified = isFileInput ? await el.evaluate((n, count) => n.files.length === count, files.length, { timeout: 3000 }).catch(() => null) : null;
+      return { verified, adapter: 'playwright_upload', actual: verified === null && isFileInput ? `${files.map(f => path.basename(f)).join(', ')} (input replaced by the page; observe to confirm)` : files.map(f => path.basename(f)) };
     }
     const rich = await el.evaluate(n => n.isContentEditable);
     const read = () => rich ? el.innerText() : el.inputValue();
-    const norm = t => String(t).replace(/\s+/g, ' ').trim();
+    const norm = t => String(t).replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim();
     if (action.op === 'fill') await el.fill(String(action.value), { timeout: 5000 });
     else if (action.op === 'type_text') await el.pressSequentially(String(action.value), { delay: action.pace_ms ?? 0, timeout: 20000 });
     else if (action.op === 'press') await el.press(String(action.value), { timeout: 5000 });
