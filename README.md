@@ -93,10 +93,15 @@ MULTI_INPUT_USER_DATA_DIR=~/.multi-input/chrome-profile MULTI_INPUT_CHANNEL=chro
 | `click_text` | 按可见文字点击，`selector` 或 `ref` 限定容器；用于自定义下拉、合集弹窗、选项卡 |
 | `press` | 按键，如在标签输入框里 `Enter` 生成标签 |
 | `wait_text` | 等文字出现，如“上传完成”，`timeout_ms` 最长 10 分钟 |
+| `hover` | 真实鼠标移到 `ref` 或 `selector`（可加 `value` 按文字缩小范围、`hold_ms` 停留）上；用于只在悬停时出现的按钮，如 B站封面「封面设置」、视频号封面卡片的「编辑」。鼠标停在原处，后面紧跟的 `click_text` 点同一容器里的按钮时悬停状态还在 |
+| `click` + `selector` | 不是按钮、观察不到 ref 的可点击区域（封面槽、卡片），用 CSS `selector` 定位，可加 `value` 按文字缩小 |
+| `force: true` | `click` / `click_text` / `hover` 跳过可操作性检查（元素在动画中、被不拦截事件的装饰层盖住） |
 
-`workspace_observe` 新增 `selector`（只观察某个容器）和 `include_links: false`（大页面去掉链接），并会返回 placeholder、contenteditable 文本、`role=switch` 等开关的 `aria-checked`。
+`set_checked`（单独动作和 `form_patch` 里都一样）：组件库的单选框/复选框常把真正的 input 藏在 label 下面，而且是受控组件，脚本点击不生效。先按原生方式改，回读状态不对就用真实鼠标点它的 label；没有 input 的 `role=radio/checkbox/switch` 元素直接点元素本身。结果里走了这一步的目标带 `via: "label_click"`。
 
-仿投稿页验证：`npm run test:rich`，在 `tests/fixtures/upload-form.html` 上一次批次完成视频上传、标题与富文本简介、自定义分区下拉、两个回车标签、开关和封面选择框，全部回读校验。这个夹具只模拟了常见控件形态，真实 B站页面的结构需要首次使用时观察确认。
+`workspace_observe` 新增 `selector`（只观察某个容器）和 `include_links: false`（大页面去掉链接），并会返回 placeholder、contenteditable 文本、`role=switch` 等开关的 `aria-checked`。在 CDP 模式下连本机浏览器时，`upload` 直接把路径交给浏览器（不受 Playwright 50MB 限制）；观察会走进 open shadow root（视频号这类微前端）；每次观察都会重新编号 ref。
+
+仿投稿页验证：`npm run test:rich`，在 `tests/fixtures/upload-form.html` 上一次批次完成视频上传、标题与富文本简介、自定义分区下拉、两个回车标签、开关和封面选择框，全部回读校验。`npm run test:pointer` 在 `tests/fixtures/pointer-form.html` 上验证悬停才出现的按钮、`selector` 点击、只认可信点击的受控单选框和 ARIA 开关。这两个夹具只模拟了常见控件形态，真实页面的结构需要首次使用时观察确认。
 
 ## 在 Codex 中使用
 

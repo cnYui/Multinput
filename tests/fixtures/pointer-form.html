@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>悬停与组件库单选框夹具</title>
+<style>
+  body { font: 14px sans-serif; padding: 24px; }
+  /* 1. 只在悬停时出现的「编辑」按钮（B站封面入口、视频号封面卡片） */
+  .cover { position: relative; width: 160px; height: 120px; background: #ccc; margin-bottom: 16px; }
+  .cover .edit { display: none; position: absolute; left: 0; right: 0; bottom: 0; background: #0008; color: #fff; text-align: center; padding: 6px 0; cursor: pointer; }
+  .cover:hover .edit { display: block; }
+  /* 2. 不是按钮的可点击区域（只能用 selector 定位） */
+  .slot { width: 160px; height: 40px; background: #eef; margin-bottom: 16px; cursor: pointer; }
+  /* 3. 组件库单选框：真正的 input 缩成一点、被 label 盖住；只认可信点击（模拟 React 受控组件） */
+  .semi-radio { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid #ccc; margin: 4px; cursor: pointer; }
+  .semi-radio input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+  .semi-radio::before { content: ''; width: 12px; height: 12px; border: 1px solid #888; border-radius: 50%; }
+  .semi-radio.checked::before { background: #333; }
+  /* 4. ARIA 开关：没有 input，只认可信点击 */
+  [role=switch] { display: inline-block; width: 40px; height: 20px; border-radius: 10px; background: #bbb; cursor: pointer; }
+  [role=switch][aria-checked=true] { background: #2a2; }
+</style>
+</head>
+<body>
+  <div class="cover" id="cover"><div class="edit" id="cover-edit">编辑</div></div>
+  <div class="slot" id="slot"></div>
+  <p id="state">未操作</p>
+
+  <div id="decl">
+    <label class="semi-radio"><input type="radio" name="decl" value="ai" id="decl-ai"><span>内容由AI生成</span></label>
+    <label class="semi-radio"><input type="radio" name="decl" value="none" id="decl-none"><span>无需添加自主声明</span></label>
+  </div>
+  <div><span>原创声明</span> <div role="switch" aria-checked="false" aria-label="原创声明" id="orig" tabindex="0"></div></div>
+
+<script>
+  const state = document.getElementById('state'), log = (t) => { state.textContent = t; };
+  document.getElementById('cover-edit').addEventListener('click', () => log('封面编辑已打开'));
+  document.getElementById('slot').addEventListener('click', () => log(state.textContent + ' / 封面槽已点击'));
+
+  // 受控单选框：脚本里的 input.click()（isTrusted=false）被撤销，只有用户真实点击才生效
+  const radios = [...document.querySelectorAll('input[name=decl]')];
+  const paint = () => radios.forEach(r => r.closest('label').classList.toggle('checked', r.checked));
+  radios.forEach(r => r.addEventListener('click', (e) => { if (!e.isTrusted) e.preventDefault(); setTimeout(paint); }));
+
+  const sw = document.getElementById('orig');
+  sw.addEventListener('click', (e) => { if (e.isTrusted) sw.setAttribute('aria-checked', String(sw.getAttribute('aria-checked') !== 'true')); });
+</script>
+</body>
+</html>

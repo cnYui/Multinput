@@ -26,8 +26,9 @@ On large pages observe with `include_links: false` and, when possible, a `select
 - Plain inputs and rich editors in one `form_patch` (`fill` works on contenteditable; newlines become paragraphs).
 - `upload` for video/cover files with absolute paths; follow it with `wait_text` for the page's own completion text when later steps depend on the upload.
 - Custom dropdowns and pickers: `click_text` on the trigger, then `click_text` with a `selector` or `ref` scope on the option, chained with `after`.
-- Tag inputs: `fill` then `press` `Enter` per tag.
-- Switches/declarations: `click` the observed `role=switch` ref, then re-observe `checked`.
+- Tag inputs: `fill` then `press` `Enter` per tag. Some sites clear the input asynchronously after Enter; give the next `fill`/`type_text` a `start_ms` of ~800.
+- Switches, radios and declarations: `set_checked` the observed ref (inside `form_patch` or alone). When a component-library control ignores the synthetic click, the executor retries with a trusted click on its label or the `role=switch` element; the target then reports `via: "label_click"`. Re-observe `checked` afterwards.
+- Controls that only appear on hover (cover "edit" buttons, row menus): `hover` the container by `selector`, then `click_text` the button inside the same container, chained with `after`. For clickable areas that observation does not list (cover slots, cards), use `click` with a `selector`. Add `force: true` only when a decorative layer blocks actionability checks.
 
 Never click the final submit/publish button unless the user explicitly asked for it in this task; stop after filling and report what was verified.
 
